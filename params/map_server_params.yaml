@@ -1,0 +1,3 @@
+map_server:
+    ros__parameters:
+        yaml_filename: "/home/joel/biorobotics_lab/turtlebots_ws/src/turtle_nav/maps/map_conference_room.yaml"
