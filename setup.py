@@ -29,7 +29,10 @@ setup(
             'plan_to_control = turtle_nav.plan_to_control:main',
             'waypoint_navigator = turtle_nav.waypoint_navigator:main',
             'waypoint_navigator_no_bt_r1 = turtle_nav.waypoint_navigator_no_bt_r1:main',
-            'waypoint_navigator_no_bt_r2 = turtle_nav.waypoint_navigator_no_bt_r2:main'
+            'waypoint_navigator_no_bt_r2 = turtle_nav.waypoint_navigator_no_bt_r2:main',
+            'homicidal_chauffeur_game = turtle_nav.homicidal_chauffeur_game:main',
+            'evader = turtle_nav.evader:main',
+            'chauffeur = turtle_nav.chauffeur:main'
         ],
     },
 )
