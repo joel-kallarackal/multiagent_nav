@@ -30,6 +30,12 @@ setup(
             'waypoint_navigator = turtle_nav.waypoint_navigator:main',
             'waypoint_navigator_no_bt_r1 = turtle_nav.waypoint_navigator_no_bt_r1:main',
             'waypoint_navigator_no_bt_r2 = turtle_nav.waypoint_navigator_no_bt_r2:main',
+            'waypoint_navigator_no_bt_r3 = turtle_nav.waypoint_navigator_no_bt_r3:main',
+            'waypoint_navigator_no_bt_r4 = turtle_nav.waypoint_navigator_no_bt_r4:main',
+            'waypoint_navigator_no_bt_r1_smooth = turtle_nav.waypoint_navigator_no_bt_r1_smooth:main',
+            'waypoint_navigator_no_bt_r4_smooth = turtle_nav.waypoint_navigator_no_bt_r4_smooth:main',
+            'waypoint_navigator_no_bt_path_through_poses_r1 = turtle_nav.waypoint_navigator_no_bt_path_through_poses_r1:main',
+            'waypoint_navigator_no_bt_path_through_poses_r2 = turtle_nav.waypoint_navigator_no_bt_path_through_poses_r2:main',
             'homicidal_chauffeur_game = turtle_nav.homicidal_chauffeur_game:main',
             'evader = turtle_nav.evader:main',
             'chauffeur = turtle_nav.chauffeur:main'

@@ -5,6 +5,7 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from std_msgs.msg import String
 from collections import deque
 import rclpy
+import numpy as np
 
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from nav_msgs.msg import OccupancyGrid
@@ -32,6 +33,8 @@ class Pursuer(Node):
             PoseWithCovarianceStamped, '/robot1/amcl_pose', self.evader_pose_cb, qos_profile)
         self.pursuer_pose_sub = self.create_subscription(
             PoseWithCovarianceStamped, '/robot2/amcl_pose', self.pursuer_pose_cb, qos_profile)
+        self.global_costmap_sub = self.create_subscription(
+            OccupancyGrid, '/robot2/global_costmap/costmap', self.costmap_cb, qos_profile)
         self.game_status_sub = self.create_subscription(
             String, '/game_status', self.game_status_cb, 10)
         
@@ -45,7 +48,8 @@ class Pursuer(Node):
         self.count = 0
         self.timeout = 10
 
-        self.timer = self.create_timer(1.0, self.game_timer)
+        self.timer1 = self.create_timer(0.1, self.game_timer)
+        self.timer1 = self.create_timer(1, self.send_goal_timer)
         self.pursuer_goal_status = 0 # 0 - No Goal, 1 - Goal Received
         self.status = None
 
@@ -53,29 +57,74 @@ class Pursuer(Node):
         if self.status == "RUNNING" and self.pursuer_goal_status == 0:
             self.count+=1
 
-        # Send the next waypoint if there is no goal sent for a while
-        if self.count>=self.timeout:
-            self.count=0
+        if self.pursuer_pose!=None and self.evader_pose!=None:
+            waypoint = self.calculate_waypoint()
+            if waypoint is not None:
+                self.waypoint_stack.append(waypoint)
+                
+        # # Send the next waypoint if there is no goal sent for a while
+        # if self.count>=self.timeout:
+        #     self.count=0
+        #     self.send_next_waypoint()
+    
+    def send_goal_timer(self):
+        if self.status == "RUNNING":
             self.send_next_waypoint()
 
     def evader_pose_cb(self, msg):
         if self.evader_pose==None:
-            self.evader_pose = msg.pose.pose
-            x, y = self.evader_pose.position.x, self.evader_pose.position.y
-            self.waypoint_stack.append((x,y))
-            self.send_next_waypoint()
-        else:
-            self.evader_pose = msg.pose.pose
-            x, y = self.evader_pose.position.x, self.evader_pose.position.y
-            self.waypoint_stack.append((x,y))
+            self.get_logger().info("Chauffeur sees the man on the road!")
+            # self.evader_pose = msg.pose.pose
+            # x, y = self.evader_pose.position.x, self.evader_pose.position.y
+            # waypoint = self.calculate_waypoint()
+            # if waypoint is not None:
+            #     self.waypoint_stack.append(waypoint)
+            #     self.send_next_waypoint()
+
+        self.evader_pose = msg.pose.pose
+                
 
     def pursuer_pose_cb(self, msg):
         if self.pursuer_pose==None:
             self.get_logger().info("Human sees the chauffeur charging towards him")
         self.pursuer_pose = msg.pose.pose
+    
+    def costmap_cb(self, msg: OccupancyGrid):
+        self.global_costmap = msg
 
     def game_status_cb(self, msg):
         self.status = msg.data
+    
+    def calculate_waypoint(self, cost_threshold = 50):
+        # if self.global_costmap is None or self.evader_pose is None or self.pursuer_pose is None:
+        #     self.get_logger().warn("Waypoint None")
+        #     return None
+        # free_cells = []
+        # width = self.global_costmap.info.width
+        # height = self.global_costmap.info.height
+        # resolution = self.global_costmap.info.resolution
+        # origin_x = self.global_costmap.info.origin.position.x
+        # origin_y = self.global_costmap.info.origin.position.y
+        # data = self.global_costmap.data
+
+        # ev_pos_vec = np.array([self.evader_pose.position.x, self.evader_pose.position.y])
+        # scores = []
+
+        # for idx in range(width * height):
+        #     if data[idx] >= 0 and data[idx] <= cost_threshold:
+        #         x = origin_x + (idx % width) * resolution
+        #         y = origin_y + (idx // width) * resolution
+
+        #         scores.append(((x,y), np.linalg.norm(ev_pos_vec-np.array([x, y]))))
+
+
+        # scores.sort(key=lambda s: s[1], reverse=False)
+        # best_waypoint = scores[0][0] # Free space nearest to the evader robot
+
+        # return best_waypoint
+
+        ev_pos_vec = np.array([self.evader_pose.position.x, self.evader_pose.position.y])
+        return ev_pos_vec
 
     def send_next_waypoint(self):
         if len(self.waypoint_stack) == 0:
@@ -94,7 +143,7 @@ class Pursuer(Node):
         goal_msg.goal.header.stamp = self.get_clock().now().to_msg()
         goal_msg.goal.pose.position.x = x
         goal_msg.goal.pose.position.y = y
-        goal_msg.goal.pose.orientation.w = 1.0  # Face forward
+        goal_msg.goal.pose.orientation.w = 2.0  # Face forward
 
         future = self.compute_path_client.send_goal_async(goal_msg)
         future.add_done_callback(self.path_response_callback)
@@ -139,7 +188,8 @@ class Pursuer(Node):
     def on_path_followed(self, future):
         self.get_logger().info('Reached waypoint.')
         self.current_index += 1
-        self.send_next_waypoint()
+        if self.status == "RUNNING":
+            self.send_next_waypoint()
 
 def main():
     rclpy.init()

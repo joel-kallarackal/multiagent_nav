@@ -5,11 +5,12 @@ from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from std_msgs.msg import String
 import random
 from collections import deque
-from nav_msgs.msg import OccupancyGrid
+from nav_msgs.msg import OccupancyGrid, Path
 import math
 import numpy as np
 import rclpy
 import random
+import time
 
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 
@@ -39,6 +40,8 @@ class Evader(Node):
             OccupancyGrid, '/robot1/global_costmap/costmap', self.costmap_cb, qos_profile)
         self.game_status_sub = self.create_subscription(
             String, '/game_status', self.game_status_cb, 10)
+        self.plan_sub = self.create_subscription(
+            Path, '/robot1/plan', self.plan_cb, 10)
         
         self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot1/compute_path_to_pose')
         self.follow_path_client = ActionClient(self, FollowPath, '/robot1/follow_path')
@@ -50,17 +53,36 @@ class Evader(Node):
         self.count = 0
         self.timeout = 10
 
-        self.timer = self.create_timer(1.0, self.waypoint_timer)
+        self.timer1 = self.create_timer(0.1, self.waypoint_timer)
+        self.timer2 = self.create_timer(1, self.send_goal_timer) # timer2 should run at a lower frequency than timer1
+
         self.evader_goal_status = 0 # 0 - No Goal, 1 - Goal Received
         self.status = None
+
+        self.current_path = None
+        self.remaining_path = None
 
     def waypoint_timer(self):
         if self.status == "RUNNING" and self.evader_goal_status == 0:
             self.count+=1
+        
+        if self.pursuer_pose!=None and self.evader_pose!=None:
+            waypoint = self.calculate_waypoint()
+            if waypoint is not None:
+                self.waypoint_stack.append(waypoint)
 
-        # Send the next waypoint if there is no goal sent for a while
-        if self.count>=self.timeout:
-            self.count=0
+        # # Send the next waypoint if there is no goal sent for a while
+        # if self.count>=self.timeout:
+        #     self.count=0
+        #     if len(self.waypoint_stack)==0:
+        #         self.waypoint_stack.append()
+        #     self.send_next_waypoint()
+    
+    def send_goal_timer(self):
+        if self.current_path is not None and self.remaining_path is not None:
+            self.get_logger().info(f"{len(self.remaining_path.poses)}")
+
+        if self.status == "RUNNING":
             self.send_next_waypoint()
 
     def evader_pose_cb(self, msg):
@@ -69,12 +91,13 @@ class Evader(Node):
     def pursuer_pose_cb(self, msg):
         if self.pursuer_pose==None:
             self.get_logger().info("Human sees the chauffeur charging towards him!")
-            self.pursuer_pose = msg.pose.pose
-            self.waypoint_stack.append(self.calculate_waypoint())
-            self.send_next_waypoint()
-        else:
-            self.pursuer_pose = msg.pose.pose
-            self.waypoint_stack.append(self.calculate_waypoint())
+            # self.pursuer_pose = msg.pose.pose
+            # waypoint = self.calculate_waypoint()
+            # if waypoint is not None:
+            #     self.waypoint_stack.append(waypoint)
+            #     self.send_next_waypoint()
+        
+        self.pursuer_pose = msg.pose.pose
         
     def costmap_cb(self, msg: OccupancyGrid):
         self.global_costmap = msg
@@ -82,8 +105,12 @@ class Evader(Node):
     def game_status_cb(self, msg):
         self.status = msg.data
     
-    def calculate_waypoint(self, num_samples=50, cost_threshold=50):
+    def plan_cb(self, msg):
+        self.remaining_path = msg
+    
+    def calculate_waypoint(self, num_samples=250, cost_threshold=50):
         if self.global_costmap is None or self.evader_pose is None or self.pursuer_pose is None:
+            self.get_logger().warn("Waypoint None")
             return
         free_cells = []
         width = self.global_costmap.info.width
@@ -101,7 +128,7 @@ class Evader(Node):
         b2 = -b1*a_hat[0]/a_hat[1]
         b_hat = np.array([b1, b2])
         
-        min_r = 0.8
+        min_r = 0.4
         max_r = 1.2
 
         # Uniformly sample unoccupied points from the costmap
@@ -115,15 +142,20 @@ class Evader(Node):
                 if np.dot(a_hat,np.array([x,y])-ev_pos_vec)>0 and np.linalg.norm(np.array([x,y])-ev_pos_vec)>min_r and np.linalg.norm(np.array([x,y])-ev_pos_vec)<max_r:
                     free_cells.append((x, y))
         
+        # Go through every cell
+        # for 4
         # Sample a example goal point
         # Probability distribution : p(x) = (b - cos(x)) / (b*pi - 2) 
         # p_inv(x) = arccos(b - (b*pi-2)*x)
-        b = 1.01
+        b = 1.05
         x_list = np.array([random.uniform((b-1)/(b*np.pi-2), b/(b*np.pi-2)) for i in range(50)])
 
         theta1 = np.arccos(b-(b*np.pi-2)*x_list)
         theta2 = -np.arccos(b-(b*np.pi-2)*x_list)
+
         theta = np.concatenate((theta1, theta2))
+
+        theta = np.array([random.uniform(-np.pi/3, np.pi/3) for i in range(100)])
         
         r = 1
         example_waypoints = ev_pos_vec + r*np.cos(np.pi/2 - theta)[:, None]*b_hat + r*np.sin(np.pi/2 - theta)[:, None]*a_hat
@@ -135,21 +167,24 @@ class Evader(Node):
                 scores.append((waypoint,score))
         
         scores.sort(key=lambda s: s[1], reverse=True)
-        best_waypoint = scores[0][0]
+        if len(scores)>0:
+            best_waypoint = scores[0][0]
+            return best_waypoint
+        else:
+            return None
 
-        return best_waypoint
+        
 
     def send_next_waypoint(self):
         if len(self.waypoint_stack) == 0:
+            self.get_logger().info("No waypoints available!")
             self.evader_goal_status = 0
             return
 
         self.evader_goal_status = 1
         self.count=0
         
-        waypoint = self.waypoint_stack.pop()
-        self.get_logger().info(f"{waypoint}")
-        x, y = waypoint[0], waypoint[1]
+        x, y = self.waypoint_stack.pop()
         self.get_logger().info(f'Sending waypoint {self.current_index + 1}: ({x}, {y})')
 
         goal_msg = ComputePathToPose.Goal()
@@ -176,6 +211,7 @@ class Evader(Node):
     def send_to_controller(self, future):
         result = future.result().result
         path = result.path
+        self.current_path = path
         self.get_logger().info(f'Got path with {len(path.poses)} poses. Sending to controller...')
 
         if not path.poses:
@@ -203,7 +239,8 @@ class Evader(Node):
     def on_path_followed(self, future):
         self.get_logger().info('Reached waypoint.')
         self.current_index += 1
-        self.send_next_waypoint()
+        if self.status == "RUNNING":
+            self.send_next_waypoint()
 
     
 def main():

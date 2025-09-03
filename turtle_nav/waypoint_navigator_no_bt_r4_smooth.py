@@ -5,9 +5,13 @@ from nav2_msgs.action import ComputePathToPose, FollowPath
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+
 ### Sinusoidal
 import numpy as np
 import matplotlib.pyplot as plt
+
 
 def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, frequency=1):
     """
@@ -44,29 +48,63 @@ def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, freq
 
     return waypoints.tolist()
 
+p1 = (-2.1270616951528085, -2.7723084523012593)
+# p2 = (0.8108174780823566, -2.232505364315845)
+p2 = (2.745143914068928, -2.0507380772115447)
 
-# p1 = (-2.1270616951528085, -2.7723084523012593)
-# p2 = (2.745143914068928, -2.0507380772115447)
+WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=15, amplitude=0.5, frequency=2)
+# WAYPOINTS = WAYPOINTS[:-6]
+# WAYPOINTS = [(0.8108174780823566, -2.232505364315845)]
 
-p1 = (13.779971121307288, 17.244540004791123)
-p2 = (13.671288153615949, 20.31729862980733)
-
-WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=25, amplitude=0.5, frequency=2)
-WAYPOINTS = WAYPOINTS[:-2]
 class WaypointNavigator(Node):
     def __init__(self):
-        super().__init__('waypoint_navigator_r2')
+        super().__init__('waypoint_navigator_r4')
 
-        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot2/compute_path_to_pose')
-        self.follow_path_client = ActionClient(self, FollowPath, '/robot2/follow_path')
+        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot4/compute_path_to_pose')
+        self.follow_path_client = ActionClient(self, FollowPath, '/robot4/follow_path')
 
         self.current_index = 0
         self.get_logger().info('Waiting for action servers...')
         self.compute_path_client.wait_for_server()
         self.follow_path_client.wait_for_server()
         self.get_logger().info('Connected to action servers.')
+        
+        self.timer1 = self.create_timer(0.1, self.waypoint_timer)
+
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            depth=1
+        )
+        
+        self.pose = None
+        self.pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped, '/robot4/amcl_pose', self.pose_cb, qos_profile)
 
         self.send_next_waypoint()
+
+    def pose_cb(self, msg):
+        self.pose = msg.pose.pose
+
+    def waypoint_timer(self):
+        if self.current_index<1 or self.pose is None:
+            return
+        
+        curr_xy = np.array([self.pose.position.x, self.pose.position.y])
+        x_prev, y_prev = WAYPOINTS[self.current_index-1]
+        waypoint1 = np.array([x_prev, y_prev])
+        x, y = WAYPOINTS[self.current_index]
+        waypoint2 = np.array([x, y])
+        dist_between_waypoints = np.linalg.norm(waypoint1-waypoint2)
+        distance_to_waypoint = np.linalg.norm(curr_xy-waypoint2)
+
+        percentage_remaining = (distance_to_waypoint/dist_between_waypoints)*100
+
+        self.get_logger().warn(f"{percentage_remaining}")
+        if percentage_remaining<100:
+            self.get_logger().warn(f"{percentage_remaining}")
+            self.current_index += 1
+            self.send_next_waypoint()
 
     def send_next_waypoint(self):
         if self.current_index >= len(WAYPOINTS):

@@ -45,20 +45,18 @@ def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, freq
     return waypoints.tolist()
 
 
-# p1 = (-2.1270616951528085, -2.7723084523012593)
-# p2 = (2.745143914068928, -2.0507380772115447)
-
-p1 = (13.779971121307288, 17.244540004791123)
-p2 = (13.671288153615949, 20.31729862980733)
+p1 = (-2.1270616951528085, -2.7723084523012593)
+# p2 = (0.8108174780823566, -2.232505364315845)
+p2 = (2.745143914068928, -2.0507380772115447)
 
 WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=25, amplitude=0.5, frequency=2)
-WAYPOINTS = WAYPOINTS[:-2]
+WAYPOINTS = WAYPOINTS[:-4]
 class WaypointNavigator(Node):
     def __init__(self):
-        super().__init__('waypoint_navigator_r2')
+        super().__init__('waypoint_navigator_r3')
 
-        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot2/compute_path_to_pose')
-        self.follow_path_client = ActionClient(self, FollowPath, '/robot2/follow_path')
+        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot3/compute_path_to_pose')
+        self.follow_path_client = ActionClient(self, FollowPath, '/robot3/follow_path')
 
         self.current_index = 0
         self.get_logger().info('Waiting for action servers...')

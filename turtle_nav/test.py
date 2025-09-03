@@ -1,55 +1,59 @@
-import random
 import numpy as np
-
-b = 1.01
-x_list1 = np.array([random.uniform((b-1)/(b*np.pi-2), b/(b*np.pi-2)) for i in range(5)])
-x_list2 = np.array([random.uniform((b-1)/(b*np.pi-2), b/(b*np.pi-2)) for i in range(5)])
-
-theta1 = np.arccos(b-(b*np.pi-2)*x_list1)
-theta2 = -np.arccos(b-(b*np.pi-2)*x_list2)
-theta = np.concatenate((theta1, theta2))
-
-chaf_pos_vec = np.array([0, 0])
-ev_pos_vec = np.array([0, 1])
-
-a_hat = (ev_pos_vec-chaf_pos_vec)/np.linalg.norm(ev_pos_vec-chaf_pos_vec)
-b1 = np.sqrt(1/(1+a_hat[0]**2/a_hat[1]**2))
-b2 = -b1*a_hat[0]/a_hat[1]
-b_hat = np.array([b1, b2])
-
-r = 1
-example_waypoints = ev_pos_vec + r*np.cos(np.pi/2 - theta)[:, None]*b_hat + r*np.sin(np.pi/2 - theta)[:, None]*a_hat
-
-x = np.random.uniform(-5, 5, 10)
-y = np.random.uniform(0, 5, 10)
-
-free_cells = np.column_stack((x, y))
-
-scores = []
-for waypoint in free_cells:
-    for example_waypoint in example_waypoints:
-        score = 1*np.linalg.norm(waypoint-ev_pos_vec) + 1/(np.dot(example_waypoint/np.linalg.norm(example_waypoint), (waypoint-ev_pos_vec)/np.linalg.norm(waypoint-ev_pos_vec)))
-        scores.append((waypoint,score))
-
-scores.sort(key=lambda s: s[1], reverse=True)
-best_waypoint = scores[0][0]
-print(best_waypoint)
 import matplotlib.pyplot as plt
 
-x = [p[0] for p in example_waypoints]
-y = [p[1] for p in example_waypoints]
+def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, frequency=1):
+    """
+    Generates sinusoidal waypoints along the line between two points.
 
-# Plot points
-plt.figure(figsize=(6, 6))
-plt.scatter(x, y, color="blue", label="Points")
-plt.scatter(best_waypoint[0], best_waypoint[1], color="red", label="Points")
+    Parameters:
+        p1 (tuple): (x1, y1) start point
+        p2 (tuple): (x2, y2) end point
+        num_points (int): Number of waypoints
+        amplitude (float): Amplitude of the sine wave
+        frequency (float): Number of sine cycles along the line
 
-# Labels and grid
+    Returns:
+        waypoints (list of tuples): List of (x, y) waypoints
+    """
+    x1, y1 = p1
+    x2, y2 = p2
+
+    # Line vector and length
+    line_vec = np.array([x2 - x1, y2 - y1])
+    line_length = np.linalg.norm(line_vec)
+    line_unit = line_vec / line_length
+
+    # Perpendicular unit vector
+    perp_unit = np.array([-line_unit[1], line_unit[0]])
+
+    # Sample distances along the line
+    t = np.linspace(0, 1, num_points)
+    base_points = np.array([x1, y1]) + np.outer(t, line_vec)
+
+    # Apply sinusoidal offset along perpendicular direction
+    offsets = amplitude * np.sin(2 * np.pi * frequency * t)
+    waypoints = base_points + np.outer(offsets, perp_unit)
+
+    return waypoints.tolist()
+
+# Example usage
+
+p1 = (-2.1270616951528085, -2.7723084523012593)
+# p2 = (0.8108174780823566, -2.232505364315845)
+p2 = (2.745143914068928, -2.0507380772115447)
+
+waypoints = generate_sinusoidal_between_points(p1, p2, num_points=25, amplitude=0.5, frequency=2)
+
+
+# Visualization
+waypoints = np.array(waypoints)
+plt.figure(figsize=(8, 5))
+plt.plot(waypoints[:, 0], waypoints[:, 1], 'b-', label="Sinusoidal Path")
+plt.scatter([p1[0], p2[0]], [p1[1], p2[1]], color="red", label="Endpoints")
 plt.xlabel("X")
 plt.ylabel("Y")
-plt.title("Scatter Plot of Points")
+plt.title("Sinusoidal Waypoints Between Two Points")
 plt.legend()
-plt.grid(True)
-plt.axis("equal")  # keep aspect ratio equal
-
+plt.axis("equal")
+plt.grid()
 plt.show()

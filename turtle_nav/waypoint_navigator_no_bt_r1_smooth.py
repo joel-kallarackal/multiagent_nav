@@ -5,9 +5,14 @@ from nav2_msgs.action import ComputePathToPose, FollowPath
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 
+from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
+from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+
 ### Sinusoidal
 import numpy as np
 import matplotlib.pyplot as plt
+import math
+
 
 def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, frequency=1):
     """
@@ -44,29 +49,92 @@ def generate_sinusoidal_between_points(p1, p2, num_points=100, amplitude=1, freq
 
     return waypoints.tolist()
 
+p1 = (-2.1270616951528085, -2.7723084523012593)
+# p2 = (0.8108174780823566, -2.232505364315845)
+p2 = (2.745143914068928, -2.0507380772115447)
 
-# p1 = (-2.1270616951528085, -2.7723084523012593)
-# p2 = (2.745143914068928, -2.0507380772115447)
+WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=20, amplitude=0.5, frequency=2)
+# WAYPOINTS = WAYPOINTS[:-6]
+# WAYPOINTS = [(0.8108174780823566, -2.232505364315845)]
 
-p1 = (13.779971121307288, 17.244540004791123)
-p2 = (13.671288153615949, 20.31729862980733)
-
-WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=25, amplitude=0.5, frequency=2)
-WAYPOINTS = WAYPOINTS[:-2]
 class WaypointNavigator(Node):
     def __init__(self):
-        super().__init__('waypoint_navigator_r2')
+        super().__init__('waypoint_navigator_r4')
 
-        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot2/compute_path_to_pose')
-        self.follow_path_client = ActionClient(self, FollowPath, '/robot2/follow_path')
+        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot1/compute_path_to_pose')
+        self.follow_path_client = ActionClient(self, FollowPath, '/robot1/follow_path')
 
         self.current_index = 0
         self.get_logger().info('Waiting for action servers...')
         self.compute_path_client.wait_for_server()
         self.follow_path_client.wait_for_server()
         self.get_logger().info('Connected to action servers.')
+        
+        self.timer1 = self.create_timer(0.1, self.waypoint_timer)
+
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            depth=1
+        )
+        
+        self.pose = None
+        self.pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped, '/robot1/amcl_pose', self.pose_cb, qos_profile)
+
+        self.percentage = 0.0
+        self.waypoint_sent = False
+        self.progress_updated_for_new_waypoint = False
 
         self.send_next_waypoint()
+
+    def pose_cb(self, msg):
+        self.pose = msg.pose.pose
+        self.update_path_progress(self.pose)
+    
+    def euclidean_distance(self, p1, p2):
+        return math.sqrt((p1.x - p2.x)**2 + (p1.y - p2.y)**2)
+
+    def update_path_progress(self, current_pose):
+        if not hasattr(self, "current_path") or not self.current_path.poses:
+            return
+        
+        # Precompute total path length once
+        if not hasattr(self, "total_path_length"):
+            self.total_path_length = 0.0
+            for i in range(1, len(self.current_path.poses)):
+                p1 = self.current_path.poses[i-1].pose.position
+                p2 = self.current_path.poses[i].pose.position
+                self.total_path_length += self.euclidean_distance(p1, p2)
+        
+        # Find closest point on path
+        closest_idx = min(
+            range(len(self.current_path.poses)),
+            key=lambda i: self.euclidean_distance(
+                current_pose.position, self.current_path.poses[i].pose.position
+            )
+        )
+        
+        # Distance traveled = sum of segments up to closest_idx
+        traveled = 0.0
+        for i in range(1, closest_idx + 1):
+            p1 = self.current_path.poses[i-1].pose.position
+            p2 = self.current_path.poses[i].pose.position
+            traveled += self.euclidean_distance(p1, p2)
+        
+        self.percentage = traveled / self.total_path_length * 100.0
+        if self.progress_updated_for_new_waypoint ==  False:
+            self.progress_updated_for_new_waypoint = True
+            self.waypoint_sent  = False
+        self.get_logger().warn(f"Path progress: {self.percentage:.2f}%")
+
+
+    def waypoint_timer(self):
+        if self.percentage>20 and self.waypoint_sent == False:
+            self.current_index+=1
+            self.send_next_waypoint()
+            self.waypoint_sent = True
+            self.progress_updated_for_new_waypoint = False
 
     def send_next_waypoint(self):
         if self.current_index >= len(WAYPOINTS):
@@ -99,6 +167,8 @@ class WaypointNavigator(Node):
     def send_to_controller(self, future):
         result = future.result().result
         path = result.path
+        self.current_path = result.path
+
         self.get_logger().info(f'🗺️ Got path with {len(path.poses)} poses. Sending to controller...')
 
         if not path.poses:
@@ -122,9 +192,18 @@ class WaypointNavigator(Node):
         goal_handle.get_result_async().add_done_callback(self.on_path_followed)
 
     def on_path_followed(self, future):
-        self.get_logger().info('✅ Reached waypoint.')
-        self.current_index += 1
-        self.send_next_waypoint()
+        result = future.result()
+        if result.status == 4:  # SUCCEEDED
+            self.get_logger().info('✅ Reached waypoint.')
+            self.current_index += 1
+            self.send_next_waypoint()
+            self.waypoint_sent = True
+            self.progress_updated_for_new_waypoint = False
+            
+        # self.send_next_waypoint()
+        # self.waypoint_sent = True
+        # self.progress_updated_for_new_waypoint = False
+
 
 def main(args=None):
     rclpy.init(args=args)

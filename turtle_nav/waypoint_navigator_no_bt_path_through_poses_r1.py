@@ -1,7 +1,7 @@
 import rclpy
 from rclpy.node import Node
 from geometry_msgs.msg import PoseStamped
-from nav2_msgs.action import ComputePathToPose, FollowPath
+from nav2_msgs.action import FollowPath, ComputePathThroughPoses
 from nav_msgs.msg import Path
 from rclpy.action import ActionClient
 
@@ -52,13 +52,13 @@ p1 = (13.779971121307288, 17.244540004791123)
 p2 = (13.671288153615949, 20.31729862980733)
 
 WAYPOINTS = generate_sinusoidal_between_points(p1, p2, num_points=25, amplitude=0.5, frequency=2)
-WAYPOINTS = WAYPOINTS[:-2]
+
 class WaypointNavigator(Node):
     def __init__(self):
-        super().__init__('waypoint_navigator_r2')
+        super().__init__('waypoint_navigator_r1')
 
-        self.compute_path_client = ActionClient(self, ComputePathToPose, '/robot2/compute_path_to_pose')
-        self.follow_path_client = ActionClient(self, FollowPath, '/robot2/follow_path')
+        self.compute_path_client = ActionClient(self, ComputePathThroughPoses, '/robot1/compute_path_through_poses')
+        self.follow_path_client = ActionClient(self, FollowPath, '/robot1/follow_path')
 
         self.current_index = 0
         self.get_logger().info('Waiting for action servers...')
@@ -66,23 +66,25 @@ class WaypointNavigator(Node):
         self.follow_path_client.wait_for_server()
         self.get_logger().info('Connected to action servers.')
 
-        self.send_next_waypoint()
+        self.compute_path()
 
-    def send_next_waypoint(self):
-        if self.current_index >= len(WAYPOINTS):
-            self.get_logger().info('✅ All waypoints reached.')
+    def compute_path(self):
+        if len(WAYPOINTS) == 0:
+            self.get_logger().info('Waypoint set passed is empty.')
             return
 
-        x, y = WAYPOINTS[self.current_index]
-        self.get_logger().info(f'📍 Sending waypoint {self.current_index + 1}: ({x}, {y})')
+        self.get_logger().info('Computing path...')
+        goal_msg = ComputePathThroughPoses.Goal()
+        goal_msg.goals = []
 
-        goal_msg = ComputePathToPose.Goal()
-        goal_msg.goal = PoseStamped()
-        goal_msg.goal.header.frame_id = 'map'
-        goal_msg.goal.header.stamp = self.get_clock().now().to_msg()
-        goal_msg.goal.pose.position.x = x
-        goal_msg.goal.pose.position.y = y
-        goal_msg.goal.pose.orientation.w = 1.0  # Face forward
+        for (x, y) in WAYPOINTS:
+            pose = PoseStamped()
+            pose.header.frame_id = 'map'
+            pose.header.stamp = self.get_clock().now().to_msg()
+            pose.pose.position.x = x
+            pose.pose.position.y = y
+            pose.pose.orientation.w = 1.0
+            goal_msg.goals.append(pose)
 
         future = self.compute_path_client.send_goal_async(goal_msg)
         future.add_done_callback(self.path_response_callback)
@@ -99,18 +101,17 @@ class WaypointNavigator(Node):
     def send_to_controller(self, future):
         result = future.result().result
         path = result.path
-        self.get_logger().info(f'🗺️ Got path with {len(path.poses)} poses. Sending to controller...')
+        self.get_logger().info(f'🗺️ Got full path with {len(path.poses)} poses. Sending to controller...')
 
         if not path.poses:
-            self.get_logger().warn('⚠️ Empty path received. Skipping to next waypoint.')
-            self.current_index += 1
-            self.send_next_waypoint()
+            self.get_logger().warn('⚠️ Empty path received.')
             return
 
         follow_goal = FollowPath.Goal()
         follow_goal.path = path
         future = self.follow_path_client.send_goal_async(follow_goal)
         future.add_done_callback(self.follow_path_response_callback)
+
 
     def follow_path_response_callback(self, future):
         goal_handle = future.result()
@@ -122,9 +123,8 @@ class WaypointNavigator(Node):
         goal_handle.get_result_async().add_done_callback(self.on_path_followed)
 
     def on_path_followed(self, future):
-        self.get_logger().info('✅ Reached waypoint.')
+        self.get_logger().info('✅ Reached goal.')
         self.current_index += 1
-        self.send_next_waypoint()
 
 def main(args=None):
     rclpy.init(args=args)

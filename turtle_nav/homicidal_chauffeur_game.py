@@ -37,7 +37,7 @@ class HomicidalChauffeur(Node):
         # Periodic game updates
         self.timer = self.create_timer(0.1, self.game_timer)
 
-        self.dist_thresh = 0.5 # Pull from params file
+        self.dist_thresh = 0.4 # Pull from params file
 
         self.game_initialized = False
         self.game_over = False
